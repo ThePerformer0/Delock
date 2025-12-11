@@ -1,27 +1,44 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 
-static long counter = 0;
+// Scénario banque : solde partagé, retraits concurrents sans verrou.
+static long balance = 0;
+static atomic_long overdraw_count = 0;   // nombre de fois où on passe sous zéro
+static atomic_long failed_check = 0;     // nombre de fois où le solde était insuffisant au test
 
 typedef struct {
     long iterations;
+    long amount;
 } worker_args;
 
 void *worker(void *arg) {
     worker_args *cfg = (worker_args *)arg;
     for (long i = 0; i < cfg->iterations; ++i) {
-        counter++;  // accès non protégé, volontairement sujet aux races
+        // Condition de retrait sans synchronisation : race intentionnelle
+        if (balance >= cfg->amount) {
+            balance -= cfg->amount;  // accès non protégé → potentielle perte de cohérence
+            if (balance < 0) {
+                atomic_fetch_add_explicit(&overdraw_count, 1, memory_order_relaxed);
+            }
+        } else {
+            atomic_fetch_add_explicit(&failed_check, 1, memory_order_relaxed);
+        }
     }
     return NULL;
 }
 
 int main(int argc, char **argv) {
-    int threads = (argc > 1) ? atoi(argv[1]) : 4;
+    int threads = (argc > 1) ? atoi(argv[1]) : 8;
     long iterations = (argc > 2) ? atol(argv[2]) : 100000;
+    long amount = (argc > 3) ? atol(argv[3]) : 10;
+    long initial_balance = (argc > 4) ? atol(argv[4]) : threads * iterations * amount;  // solde pour viser 0 attendu
+
+    balance = initial_balance;
 
     pthread_t tids[threads];
-    worker_args args = {.iterations = iterations};
+    worker_args args = {.iterations = iterations, .amount = amount};
 
     for (int i = 0; i < threads; ++i) {
         if (pthread_create(&tids[i], NULL, worker, &args) != 0) {
@@ -34,8 +51,13 @@ int main(int argc, char **argv) {
         pthread_join(tids[i], NULL);
     }
 
-    long expected = threads * iterations;
-    printf("Final counter = %ld (expected %ld)\n", counter, expected);
-    return (counter == expected) ? 0 : 2;
+    long expected = initial_balance - threads * iterations * amount;
+    printf("Solde final = %ld (attendu %ld) | overdrafts=%ld | refus=%ld\n",
+           balance, expected,
+           atomic_load_explicit(&overdraw_count, memory_order_relaxed),
+           atomic_load_explicit(&failed_check, memory_order_relaxed));
+
+    // Retourne 0 même en présence d'incohérences pour faciliter les runs batch
+    return 0;
 }
 
