@@ -2,7 +2,6 @@
 *.out
 *.exe
 *.log
-*.csv
 *.pdf
 *.aux
 *.toc
