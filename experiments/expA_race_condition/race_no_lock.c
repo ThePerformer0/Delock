@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
     int threads = (argc > 1) ? atoi(argv[1]) : 8;
     long iterations = (argc > 2) ? atol(argv[2]) : 100000;
     long amount = (argc > 3) ? atol(argv[3]) : 10;
-    long initial_balance = (argc > 4) ? atol(argv[4]) : threads * iterations * amount;
+    long initial_balance = threads * iterations * amount;
     int run_id = (argc > 5) ? atoi(argv[5]) : 0;
 
     balance = initial_balance;

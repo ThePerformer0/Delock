@@ -21,7 +21,8 @@ for t in "${threads_list[@]}"; do
         
         # Passer seulement 3 arguments : threads, iterations, amount
         # Le programme calculera initial_balance automatiquement
-        out=$(./race_no_lock "$t" "$n" "$a" 2>&1)
+        initial=$((t * n * a))
+        out=$(./race_no_lock "$t" "$n" "$a" "$initial" "$run_id" 2>&1)
         
         # Enregistrer log complet
         echo "$out" > "${out_dir}/run_t${t}_n${n}_a${a}_r${r}.log"
