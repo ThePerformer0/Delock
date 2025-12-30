@@ -25,13 +25,13 @@ On appelle **lock inutile** un mécanisme d'exclusion mutuelle présent dans le 
 
 
 ## 3. Contribution attendue du projet
-(Je précise qu'il s'agit d'un projet de recherche donc les attente peuvent varié en focntion des résultats observés)
+(Je précise qu'il s'agit d'un projet de recherche donc les attentes peuvent varié en focntion des résultats observés)
 
 1. **Catalogue de patterns typiques** où des verrous sont inutiles (exemples simples : section critique qui n'accède qu'à des variables locales ; doublons de locks ; locks insérés par LLM sans nécessité).
 2. **Méthodologie d'évaluation (pipeline)** combinant :
    - analyse statique pour repérer les candidats,
    - instrumentation / fuzzing / exécution dirigée pour tester l'impact réel,
-   - métriques (cf. §6) permettant de quantifier utilité vs coût.
+   - métriques permettant de quantifier utilité vs coût.
 3. **Prototype (outil)** : script / binaire capable d'analyser des fichiers C (ou un autre langage mais on verra cela par la suite) simples, d'évaluer candidates, et de produire un rapport (preuves dynamiques + score d'utilité).
 4. **Expérimentations reproductibles** : corpus de programmes tests (manuels + extraits générés par LLM), scripts d'exécution, et jeux de résultats.
 
@@ -49,7 +49,7 @@ Je combine trois grandes familles d'approches — chacune a ses qualités et lim
 
 ### B. Analyse dynamique / instrumentation
 
-- **But** : exécuter le code (ou variantes instrumentées) pour trouver preuves observables que le verrou n'est pas requis (ou au contraire qu'il est nécessaire).
+- **But** : exécuter le code (ou variantes instrumentées) pour trouver des preuves observables que le verrou n'est pas requis (ou au contraire qu'il est nécessaire).
 - **Outils** : ThreadSanitizer (détection de data races), fuzzers d'ordonnancement, techniques de replay/tracing, outils similaires à MagicFuzzer pour deadlocks. 
 - **Avantage** : preuve convaincante 
 - **Limite** : couverture d'exécution (on peut ne pas déclencher certains interleavings).
@@ -81,19 +81,28 @@ Les premières expériences ont pour but d'illustrer, mesurer et formaliser les 
 
 Scripts fournis pour compiler, exécuter en boucles, instrumenter avec TSan, et agréger résultats (CSV + plots).
 
-### Expérience A — Race condition (sans lock)
+### Expérience A — Scénario "Compte bancaire" (retraits concurrents)
 
-**Objectif** : démontrer la non-déterminisme d'accès partagé sans protection et quantifier la perte d'intégrité.
+**Objectif** : démontrer et quantifier les effets d'interleavings non protégés sur une ressource partagée (compte bancaire), mesurer la fréquence des anomalies (overdraws, refus) et la dégradation de performance selon le niveau de parallélisme.
 
-**Code-type** : compteur global (balance), N threads effectuant M incréments (balance++) — code en C / pthreads.
+**Code-type** : scénario banque : solde partagé (`balance`), N threads effectuant M retraits (test `if (balance >= amount) balance -= amount`), exposition délibérée à des races.
 
-**Protocoles** :
-- Paramètres : threads ∈ {1,2,4,8,16,32}, itérations ∈ {10^4, 10^5, 10^6}, REPEATS = 20.
-- Exécution : lancer binaire non-instrumenté et version TSan (`-fsanitize=thread`) pour confirmer races (TSan signale occurrence).
+**Protocole expérimental** :
+- Paramètres recommandés : threads ∈ {1,2,4,8,16,32,64} (monter jusqu'à 128 si la machine le permet), itérations ∈ {10^4, 10^5, 10^6}, amount ∈ {1,10}, REPEATS = 5–20 selon budget.
+- Plateforme : réserver une **machine bare-metal CloudLab** ayant un grand nombre de cœurs (privilégier 64+ cœurs physiques). Préférer une réservation qui donne contrôle bare-metal pour éviter l'interférence d'un hyperviseur.
+- Bonnes pratiques pour reproductibilité et propreté des mesures : désactiver SMT/hyperthreading si souhaité, utiliser `isolcpus`/`nohz_full` et `taskset/cset` pour pinner les threads, fixer le CPU governor en mode `performance`.
+- Instrumentation : pour confirmer l'existence de races utiliser `ThreadSanitizer` (recompiler avec `-fsanitize=thread`), et exécuter des runs non-instrumentés pour mesures de performance.
 
-**Métriques** : final_balance vs expected, variance, taux d'échec (final != expected), temps d'exécution.
+**Collecte & format de sortie** : les exécutables produiront une ligne CSV par run avec le schéma suivant :
 
-**Résultat attendu** : divergences croissantes avec nombre de threads ; TSan signale races.
+```
+run_id,threads,iterations,amount,initial_balance,final_balance,expected,overdraws,failed_checks,time_sec
+```
+
+Les scripts d'expérimentation (ex. `experiments/expA_race_condition/run_many.sh`) automatiseront la génération des runs (sur plusieurs valeurs de `threads`, `iterations`, `amount`, et `repeats`) et agrégeront les lignes CSV dans un `summary.csv` prêt pour analyse (`scripts/collect_results.py`, `scripts/plot_results.py`).
+
+**Résultat attendu** : divergence croissante entre `final_balance` et `expected` avec l'augmentation du parallèle ; `ThreadSanitizer` doit signaler des races sur la version instrumentée. Les mesures de temps permettront d'étudier le coût d'une protection (versions lockées ultérieurement) et la relation charge/conten tion.
+
 
 ### Expérience B — Correctness avec mutex (protection)
 (Je penses ici que nous pouvons egalement faire les test avec les autre type de lock tel que les futex etc au moins 5 autres types)

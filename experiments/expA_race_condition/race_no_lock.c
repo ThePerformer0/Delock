@@ -34,20 +34,27 @@ int main(int argc, char **argv) {
     int threads = (argc > 1) ? atoi(argv[1]) : 8;
     long iterations = (argc > 2) ? atol(argv[2]) : 100000;
     long amount = (argc > 3) ? atol(argv[3]) : 10;
-    long initial_balance = (argc > 4) ? atol(argv[4]) : threads * iterations * amount;  // solde pour viser 0 attendu
-    int run_id = (argc > 5) ? atoi(argv[5]) : 0; // identifiant de run pour CSV
+    long initial_balance = (argc > 4) ? atol(argv[4]) : threads * iterations * amount;
+    int run_id = (argc > 5) ? atoi(argv[5]) : 0;
 
     balance = initial_balance;
 
     struct timespec tstart, tend;
     clock_gettime(CLOCK_MONOTONIC, &tstart);
 
-    pthread_t tids[threads];
+    // Allocation dynamique pour compatibilité ThreadSanitizer
+    pthread_t *tids = malloc(threads * sizeof(pthread_t));
+    if (!tids) {
+        perror("malloc");
+        return 1;
+    }
+
     worker_args args = {.iterations = iterations, .amount = amount};
 
     for (int i = 0; i < threads; ++i) {
         if (pthread_create(&tids[i], NULL, worker, &args) != 0) {
             perror("pthread_create");
+            free(tids);
             return 1;
         }
     }
@@ -55,6 +62,8 @@ int main(int argc, char **argv) {
     for (int i = 0; i < threads; ++i) {
         pthread_join(tids[i], NULL);
     }
+
+    free(tids);
 
     clock_gettime(CLOCK_MONOTONIC, &tend);
     double elapsed = (tend.tv_sec - tstart.tv_sec) + (tend.tv_nsec - tstart.tv_nsec) / 1e9;
@@ -67,11 +76,9 @@ int main(int argc, char **argv) {
     printf("Solde final = %ld (attendu %ld) | overdrafts=%ld | refus=%ld | time=%.6f\n",
            balance, expected, overdraws, failed, elapsed);
 
-    // Ligne CSV (dernière ligne) : run_id,threads,iterations,amount,initial_balance,final_balance,expected,overdraws,failed_checks,time_sec
-    printf("%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%.6f\n",
+    // Ligne CSV : run_id,threads,iterations,amount,initial_balance,final_balance,expected,overdraws,failed_checks,time_sec
+    printf("%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%.6f\n",
            run_id, threads, iterations, amount, initial_balance, balance, expected, overdraws, failed, elapsed);
 
-    // Retourne 0 même en présence d'incohérences pour faciliter les runs batch
     return 0;
 }
-
